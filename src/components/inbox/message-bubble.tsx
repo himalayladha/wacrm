@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { cn } from "@/lib/utils";
 import type { Message, MessageReaction } from "@/types";
 import {
@@ -56,9 +56,18 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
+  const blobUrlRef = useRef<string | null>(null);
 
   const loadImage = useCallback(async () => {
     if (!url) return;
+
+    setError(false);
+    setLoading(true);
+
+    if (blobUrlRef.current) {
+      URL.revokeObjectURL(blobUrlRef.current);
+      blobUrlRef.current = null;
+    }
 
     // Proxy URLs need auth fetch to create blob URL
     if (url.startsWith("/api/whatsapp/media/")) {
@@ -67,6 +76,7 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
         if (!res.ok) throw new Error("Failed to load media");
         const blob = await res.blob();
         const blobUrl = URL.createObjectURL(blob);
+        blobUrlRef.current = blobUrl;
         setSrc(blobUrl);
       } catch {
         setError(true);
@@ -80,13 +90,13 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
   }, [url]);
 
   useEffect(() => {
-    loadImage();
+    void loadImage();
     return () => {
-      if (src?.startsWith("blob:")) {
-        URL.revokeObjectURL(src);
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadImage]);
 
   if (error) {
@@ -106,12 +116,15 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
   }
 
   return (
-    <img
-      src={src ?? ""}
-      alt={alt}
-      className="max-h-64 max-w-60 rounded-lg object-cover"
-      onError={() => setError(true)}
-    />
+    <>
+      {/* eslint-disable-next-line @next/next/no-img-element -- authenticated blob/object URLs are not compatible with next/image optimization. */}
+      <img
+        src={src ?? ""}
+        alt={alt}
+        className="max-h-64 max-w-60 rounded-lg object-cover"
+        onError={() => setError(true)}
+      />
+    </>
   );
 }
 

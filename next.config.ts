@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { fileURLToPath } from "node:url";
 
 /**
  * Baseline security headers applied to every response.
@@ -53,6 +54,8 @@ const SECURITY_HEADERS = [
   },
 ] as const;
 
+const projectRoot = fileURLToPath(new URL(".", import.meta.url));
+
 const nextConfig: NextConfig = {
   /**
    * Cache-Control policy.
@@ -67,9 +70,6 @@ const nextConfig: NextConfig = {
    *   did nothing because the cache is server-side.
    *
    * Strategy:
-   *   - /_next/static/* — immutable for a year. Filenames are
-   *     content-hashed, so a new build produces new filenames; the
-   *     old ones are safe to keep indefinitely in caches.
    *   - /api/*          — no-store. API responses are per-user and
    *     must never be shared across requests at the edge.
    *   - Everything else — public, brief s-maxage + generous
@@ -78,6 +78,10 @@ const nextConfig: NextConfig = {
    *     refreshing in the background for up to 24 h. A deploy's
    *     chunk-hash drift self-heals within ~5 min with no user-
    *     visible latency.
+   *
+   *   Note: /_next/static already ships with framework-managed immutable
+   *   caching. Leaving that header to Next.js avoids dev/build warnings
+   *   in Next 16 while preserving long-lived asset caching.
    *
    *   Note: dynamic dashboard routes (/inbox, /contacts, /pipelines,
    *   /broadcasts, etc.) are server-rendered per request — Next.js
@@ -93,15 +97,6 @@ const nextConfig: NextConfig = {
    */
   async headers() {
     return [
-      {
-        source: "/_next/static/:path*",
-        headers: [
-          {
-            key: "Cache-Control",
-            value: "public, max-age=31536000, immutable",
-          },
-        ],
-      },
       {
         source: "/api/:path*",
         headers: [{ key: "Cache-Control", value: "no-store" }],
@@ -124,6 +119,9 @@ const nextConfig: NextConfig = {
         headers: [...SECURITY_HEADERS],
       },
     ];
+  },
+  turbopack: {
+    root: projectRoot,
   },
 };
 

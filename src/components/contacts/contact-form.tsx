@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useEffectEvent } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { toast } from 'sonner';
 import type { Contact, Tag, ContactTag } from '@/types';
@@ -15,7 +15,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 import { Loader2 } from 'lucide-react';
 
 interface ContactFormProps {
@@ -46,18 +45,7 @@ export function ContactForm({
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [loadingTags, setLoadingTags] = useState(false);
 
-  useEffect(() => {
-    if (open) {
-      setName(contact?.name ?? '');
-      setPhone(contact?.phone ?? '');
-      setEmail(contact?.email ?? '');
-      setCompany(contact?.company ?? '');
-      setSelectedTagIds(contactTags.map((ct) => ct.tag_id));
-      fetchTags();
-    }
-  }, [open, contact]);
-
-  async function fetchTags() {
+  const fetchTags = useEffectEvent(async () => {
     setLoadingTags(true);
     const { data } = await supabase
       .from('tags')
@@ -65,7 +53,18 @@ export function ContactForm({
       .order('name');
     if (data) setTags(data);
     setLoadingTags(false);
-  }
+  });
+
+  useEffect(() => {
+    if (open) {
+      setName(contact?.name ?? '');
+      setPhone(contact?.phone ?? '');
+      setEmail(contact?.email ?? '');
+      setCompany(contact?.company ?? '');
+      setSelectedTagIds(contactTags.map((ct) => ct.tag_id));
+      void fetchTags();
+    }
+  }, [open, contact, contactTags]);
 
   function toggleTag(tagId: string) {
     setSelectedTagIds((prev) =>

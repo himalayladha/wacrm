@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { sendTextMessage, sendTemplateMessage } from '@/lib/whatsapp/meta-api'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
+import { insertMessageWithReplyFallback } from '@/lib/whatsapp/message-persistence'
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -248,26 +249,39 @@ export async function POST(request: Request) {
     // (see supabase/migrations/001_initial_schema.sql):
     //   conversation_id, sender_type, content_type, content_text,
     //   media_url, template_name, message_id, status, created_at
-    const { data: messageRecord, error: msgError } = await supabase
-      .from('messages')
-      .insert({
-        conversation_id,
-        sender_type: 'agent',
-        content_type: message_type,
-        content_text: content_text || null,
-        media_url: media_url || null,
-        template_name: template_name || null,
-        message_id: waMessageId,
-        status: 'sent',
-        reply_to_message_id: reply_to_message_id || null,
-      })
-      .select()
-      .single()
+    const { data: messageRecord, error: msgError } =
+      await insertMessageWithReplyFallback<{ id: string }>(
+        async (payload) =>
+          await supabase
+            .from('messages')
+            .insert(payload)
+            .select()
+            .single(),
+        {
+          conversation_id,
+          sender_type: 'agent',
+          content_type: message_type,
+          content_text: content_text || null,
+          media_url: media_url || null,
+          template_name: template_name || null,
+          message_id: waMessageId,
+          status: 'sent',
+          reply_to_message_id: reply_to_message_id || null,
+        },
+        'send',
+      )
 
     if (msgError) {
       console.error('Error inserting sent message:', msgError)
       return NextResponse.json(
         { error: `Message sent to Meta but failed to save to DB: ${msgError.message}` },
+        { status: 500 }
+      )
+    }
+
+    if (!messageRecord) {
+      return NextResponse.json(
+        { error: 'Message sent to Meta but the DB insert returned no row' },
         { status: 500 }
       )
     }
