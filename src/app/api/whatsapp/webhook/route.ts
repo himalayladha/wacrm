@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { after, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import { getMediaUrl } from '@/lib/whatsapp/meta-api'
@@ -166,9 +166,43 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  // Process asynchronously so we can ack Meta within their timeout.
-  processWebhook(body).catch((error) => {
-    console.error('Error processing webhook:', error)
+  const messageCount =
+    body.entry?.reduce(
+      (total, entry) =>
+        total +
+        entry.changes.reduce(
+          (inner, change) => inner + (change.value.messages?.length ?? 0),
+          0,
+        ),
+      0,
+    ) ?? 0
+  const statusCount =
+    body.entry?.reduce(
+      (total, entry) =>
+        total +
+        entry.changes.reduce(
+          (inner, change) => inner + (change.value.statuses?.length ?? 0),
+          0,
+        ),
+      0,
+    ) ?? 0
+
+  console.log('[webhook] accepted request', {
+    entries: body.entry?.length ?? 0,
+    messageCount,
+    statusCount,
+  })
+
+  // On Vercel/Next.js, `after()` keeps the invocation alive until the
+  // async work settles. A plain fire-and-forget promise can be cut off
+  // as soon as we return 200, which makes Meta think delivery worked
+  // while the DB writes never finish.
+  after(async () => {
+    try {
+      await processWebhook(body)
+    } catch (error) {
+      console.error('Error processing webhook:', error)
+    }
   })
 
   return NextResponse.json({ status: 'received' }, { status: 200 })
@@ -543,6 +577,14 @@ async function processMessage(
     console.error('Error inserting message:', msgError)
     return
   }
+
+  console.log('[webhook] saved inbound message', {
+    userId,
+    conversationId: conversation.id,
+    contactId: contactRecord.id,
+    metaMessageId: message.id,
+    type: message.type,
+  })
 
   // Update conversation
   const { error: convError } = await supabaseAdmin()
