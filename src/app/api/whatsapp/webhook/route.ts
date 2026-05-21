@@ -26,12 +26,18 @@ interface WhatsAppMessage {
   timestamp: string
   type: string
   text?: { body: string }
+  button?: { payload?: string; text?: string }
   image?: { id: string; mime_type: string; caption?: string }
   video?: { id: string; mime_type: string; caption?: string }
   document?: { id: string; mime_type: string; filename?: string; caption?: string }
   audio?: { id: string; mime_type: string }
   sticker?: { id: string; mime_type: string }
   location?: { latitude: number; longitude: number; name?: string; address?: string }
+  interactive?: {
+    type?: string
+    button_reply?: { id?: string; title?: string }
+    list_reply?: { id?: string; title?: string; description?: string }
+  }
   reaction?: { message_id: string; emoji: string }
   /** Present when the customer swipe-replies to one of our messages. */
   context?: { id: string }
@@ -612,6 +618,7 @@ async function processMessage(
   // Fire-and-forget: a slow or failing automation must not block the
   // webhook's 200 OK response to Meta.
   const inboundText = contentText ?? message.text?.body ?? ''
+  const buttonReplyId = getButtonReplyId(message)
   const automationTriggers: (
     | 'new_contact_created'
     | 'first_inbound_message'
@@ -633,6 +640,7 @@ async function processMessage(
       contactId: contactRecord.id,
       context: {
         message_text: inboundText,
+        button_reply_id: buttonReplyId ?? undefined,
         conversation_id: conversation.id,
       },
     }).catch((err) => console.error('[automations] dispatch failed:', err))
@@ -670,6 +678,13 @@ async function parseMessageContent(
     case 'text':
       return {
         contentText: message.text?.body || null,
+        mediaUrl: null,
+        mediaType: null,
+      }
+
+    case 'button':
+      return {
+        contentText: message.button?.text || null,
         mediaUrl: null,
         mediaType: null,
       }
@@ -742,6 +757,30 @@ async function parseMessageContent(
       }
       return { contentText: null, mediaUrl: null, mediaType: null }
 
+    case 'interactive':
+      if (message.interactive?.type === 'button_reply') {
+        return {
+          contentText: message.interactive.button_reply?.title || null,
+          mediaUrl: null,
+          mediaType: null,
+        }
+      }
+      if (message.interactive?.type === 'list_reply') {
+        return {
+          contentText:
+            message.interactive.list_reply?.title ||
+            message.interactive.list_reply?.description ||
+            null,
+          mediaUrl: null,
+          mediaType: null,
+        }
+      }
+      return {
+        contentText: '[Interactive reply]',
+        mediaUrl: null,
+        mediaType: null,
+      }
+
     case 'reaction':
       return {
         contentText: message.reaction?.emoji || null,
@@ -756,6 +795,16 @@ async function parseMessageContent(
         mediaType: null,
       }
   }
+}
+
+function getButtonReplyId(message: WhatsAppMessage): string | null {
+  if (message.type === 'button') {
+    return message.button?.payload?.trim() || null
+  }
+  if (message.type === 'interactive' && message.interactive?.type === 'button_reply') {
+    return message.interactive.button_reply?.id?.trim() || null
+  }
+  return null
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

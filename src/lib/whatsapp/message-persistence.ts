@@ -12,12 +12,29 @@ interface InsertResult<T> {
 
 interface InsertPayload {
   reply_to_message_id?: string | null
+  buttons?: unknown
   [key: string]: unknown
 }
 
 type InsertRunner<T> = (payload: Record<string, unknown>) => Promise<InsertResult<T>>
 
-export function isMissingReplyLinkColumnError(error: unknown): boolean {
+const OPTIONAL_MESSAGE_COLUMNS = [
+  {
+    column: 'reply_to_message_id',
+    migration: 'supabase/migrations/009_message_actions.sql',
+    feature: 'reply linkage',
+  },
+  {
+    column: 'buttons',
+    migration: 'supabase/migrations/010_message_buttons.sql',
+    feature: 'interactive message buttons',
+  },
+] as const
+
+export function isMissingMessageColumnError(
+  error: unknown,
+  column: (typeof OPTIONAL_MESSAGE_COLUMNS)[number]['column'],
+): boolean {
   const candidate = error as PostgrestLikeError | null
   if (!candidate) return false
 
@@ -27,17 +44,25 @@ export function isMissingReplyLinkColumnError(error: unknown): boolean {
     .toLowerCase()
 
   if (candidate.code === "PGRST204" || candidate.code === "42703") {
-    return combined.includes("reply_to_message_id") || combined.length === 0
+    return combined.includes(column) || combined.length === 0
   }
 
   return (
-    combined.includes("reply_to_message_id") &&
+    combined.includes(column) &&
     (
       combined.includes("schema cache") ||
       combined.includes("column") ||
       combined.includes("does not exist")
     )
   )
+}
+
+export function isMissingReplyLinkColumnError(error: unknown): boolean {
+  return isMissingMessageColumnError(error, 'reply_to_message_id')
+}
+
+export function isMissingButtonsColumnError(error: unknown): boolean {
+  return isMissingMessageColumnError(error, 'buttons')
 }
 
 /**
@@ -50,28 +75,39 @@ export function isMissingReplyLinkColumnError(error: unknown): boolean {
  * detect the column is missing. Quoted-reply UI degrades gracefully
  * until the migration is applied.
  */
+export async function insertMessageWithOptionalFieldsFallback<T>(
+  runInsert: InsertRunner<T>,
+  payload: InsertPayload,
+  source: "send" | "webhook" | "automation",
+): Promise<InsertResult<T>> {
+  const nextPayload: Record<string, unknown> = { ...payload }
+
+  while (true) {
+    const attempt = await runInsert({ ...nextPayload })
+    if (!attempt.error) return attempt
+
+    const missing = OPTIONAL_MESSAGE_COLUMNS.find(
+      ({ column }) =>
+        Object.prototype.hasOwnProperty.call(nextPayload, column) &&
+        isMissingMessageColumnError(attempt.error, column),
+    )
+
+    if (!missing) return attempt
+
+    console.warn(
+      `[whatsapp/${source}] messages.${missing.column} is missing; ` +
+        `retrying insert without ${missing.feature}. Apply ` +
+        `${missing.migration} to enable it.`,
+    )
+
+    delete nextPayload[missing.column]
+  }
+}
+
 export async function insertMessageWithReplyFallback<T>(
   runInsert: InsertRunner<T>,
   payload: InsertPayload,
-  source: "send" | "webhook",
+  source: "send" | "webhook" | "automation",
 ): Promise<InsertResult<T>> {
-  const firstAttempt = await runInsert(payload)
-
-  if (
-    !firstAttempt.error ||
-    !Object.prototype.hasOwnProperty.call(payload, "reply_to_message_id") ||
-    !isMissingReplyLinkColumnError(firstAttempt.error)
-  ) {
-    return firstAttempt
-  }
-
-  console.warn(
-    `[whatsapp/${source}] messages.reply_to_message_id is missing; ` +
-      `retrying insert without reply linkage. Apply ` +
-      `supabase/migrations/009_message_actions.sql to enable replies.`,
-  )
-
-  const legacyPayload = { ...payload }
-  delete legacyPayload.reply_to_message_id
-  return runInsert(legacyPayload)
+  return insertMessageWithOptionalFieldsFallback(runInsert, payload, source)
 }

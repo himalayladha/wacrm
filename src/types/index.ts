@@ -78,6 +78,11 @@ export type SenderType = 'customer' | 'agent' | 'bot';
 export type ContentType = 'text' | 'image' | 'document' | 'audio' | 'video' | 'location' | 'template';
 export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
 
+export interface WhatsAppReplyButton {
+  id: string;
+  title: string;
+}
+
 export interface Message {
   id: string;
   conversation_id: string;
@@ -91,6 +96,7 @@ export interface Message {
   status: MessageStatus;
   created_at: string;
   reply_to_message_id?: string;
+  buttons?: WhatsAppReplyButton[];
 }
 
 export type ReactionActor = 'customer' | 'agent';
@@ -274,6 +280,7 @@ export type AutomationTriggerConfig =
 
 export interface SendMessageStepConfig {
   text: string;
+  buttons?: WhatsAppReplyButton[];
 }
 
 export interface SendTemplateStepConfig {
@@ -312,6 +319,7 @@ export type ConditionSubject =
   | 'contact_field'
   | 'tag_presence'
   | 'message_content'
+  | 'button_reply'
   | 'time_of_day';
 
 export interface ConditionStepConfig {

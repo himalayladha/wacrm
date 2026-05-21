@@ -40,8 +40,13 @@ import type {
   AutomationStepType,
   AutomationTriggerType,
   KeywordMatchTriggerConfig,
+  WhatsAppReplyButton,
 } from "@/types"
 import { cn } from "@/lib/utils"
+import {
+  MAX_REPLY_BUTTONS,
+  normalizeReplyButtons,
+} from "@/lib/whatsapp/reply-buttons"
 
 // ------------------------------------------------------------
 // Types (builder-local — mirror the flattened rows we POST)
@@ -130,7 +135,7 @@ function cid(): string {
 function blankConfig(type: AutomationStepType): Record<string, unknown> {
   switch (type) {
     case "send_message":
-      return { text: "" }
+      return { text: "", buttons: [] }
     case "send_template":
       return { template_name: "", language: "en_US" }
     case "add_tag":
@@ -711,17 +716,25 @@ function StepEditor({
     onChange({ ...step, step_config: { ...cfg, ...patch } })
 
   switch (step.step_type) {
-    case "send_message":
+    case "send_message": {
+      const buttons = normalizeReplyButtons(cfg.buttons)
       return (
-        <FieldBlock label="Message text">
-          <Textarea
+        <>
+          <FieldBlock label="Message text">
+            <Textarea
             value={(cfg.text as string) ?? ""}
             onChange={(e) => set({ text: e.target.value })}
             placeholder="Hi! Thanks for reaching out…"
             className="min-h-24 bg-slate-800 text-white"
           />
-        </FieldBlock>
+          </FieldBlock>
+          <ReplyButtonsEditor
+            buttons={buttons}
+            onChange={(nextButtons) => set({ buttons: nextButtons })}
+            />
+        </>
       )
+    }
     case "send_template":
       return (
         <>
@@ -870,6 +883,7 @@ function StepEditor({
               <option value="tag_presence">Tag presence</option>
               <option value="contact_field">Contact field</option>
               <option value="message_content">Message content</option>
+              <option value="button_reply">Button reply</option>
               <option value="time_of_day">Time of day</option>
             </select>
           </FieldBlock>
@@ -882,6 +896,8 @@ function StepEditor({
                   ? "name / email / company"
                   : cfg.subject === "tag_presence"
                   ? "tag id"
+                  : cfg.subject === "button_reply"
+                  ? "button id"
                   : ""
               }
               value={(cfg.operand as string) ?? ""}
@@ -945,10 +961,96 @@ function FieldBlock({
   )
 }
 
+function ReplyButtonsEditor({
+  buttons,
+  onChange,
+}: {
+  buttons: WhatsAppReplyButton[]
+  onChange: (buttons: WhatsAppReplyButton[]) => void
+}) {
+  const canAdd = buttons.length < MAX_REPLY_BUTTONS
+
+  function updateButton(index: number, patch: Partial<WhatsAppReplyButton>) {
+    onChange(
+      buttons.map((button, currentIndex) =>
+        currentIndex === index ? { ...button, ...patch } : button,
+      ),
+    )
+  }
+
+  function addButton() {
+    if (!canAdd) return
+    onChange([
+      ...buttons,
+      {
+        id: `button_${buttons.length + 1}`,
+        title: "",
+      },
+    ])
+  }
+
+  function removeButton(index: number) {
+    onChange(buttons.filter((_, currentIndex) => currentIndex !== index))
+  }
+
+  return (
+    <FieldBlock label={`Reply buttons (${buttons.length}/${MAX_REPLY_BUTTONS})`}>
+      <div className="space-y-2">
+        <p className="text-[11px] text-slate-500">
+          Optional quick replies for WhatsApp. Button taps come back as inbound messages and can be matched by button id in another automation.
+        </p>
+        {buttons.map((button, index) => (
+          <div
+            key={`${button.id || "button"}-${index}`}
+            className="rounded-md border border-slate-700 bg-slate-800/70 p-2"
+          >
+            <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+              <Input
+                value={button.title}
+                onChange={(e) => updateButton(index, { title: e.target.value })}
+                placeholder="Button title"
+                className="bg-slate-800 text-white"
+              />
+              <Input
+                value={button.id}
+                onChange={(e) => updateButton(index, { id: e.target.value })}
+                placeholder="button_id"
+                className="bg-slate-800 text-white"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => removeButton(index)}
+                className="text-slate-300 hover:text-white"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        ))}
+        <Button
+          type="button"
+          variant="outline"
+          onClick={addButton}
+          disabled={!canAdd}
+          className="border-slate-700 bg-slate-800 text-slate-100 hover:bg-slate-700"
+        >
+          <Plus className="h-4 w-4" />
+          Add reply button
+        </Button>
+      </div>
+    </FieldBlock>
+  )
+}
+
 function previewFor(step: BuilderStep): string {
   switch (step.step_type) {
-    case "send_message":
-      return (step.step_config.text as string) || "no text yet"
+    case "send_message": {
+      const text = (step.step_config.text as string) || "no text yet"
+      const buttons = normalizeReplyButtons(step.step_config.buttons)
+      if (buttons.length === 0) return text
+      return `${text} • ${buttons.length} button${buttons.length === 1 ? "" : "s"}`
+    }
     case "send_template":
       return (step.step_config.template_name as string) || "pick a template"
     case "wait":

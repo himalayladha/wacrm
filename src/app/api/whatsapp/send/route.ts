@@ -1,8 +1,16 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { sendTextMessage, sendTemplateMessage } from '@/lib/whatsapp/meta-api'
+import {
+  sendInteractiveButtonsMessage,
+  sendTextMessage,
+  sendTemplateMessage,
+} from '@/lib/whatsapp/meta-api'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
-import { insertMessageWithReplyFallback } from '@/lib/whatsapp/message-persistence'
+import { insertMessageWithOptionalFieldsFallback } from '@/lib/whatsapp/message-persistence'
+import {
+  normalizeReplyButtons,
+  validateReplyButtons,
+} from '@/lib/whatsapp/reply-buttons'
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -47,6 +55,7 @@ export async function POST(request: Request) {
       template_name,
       template_params,
       reply_to_message_id,
+      buttons,
     } = body
 
     if (!conversation_id || !message_type) {
@@ -69,6 +78,23 @@ export async function POST(request: Request) {
         { status: 400 }
       )
     }
+
+    const buttonIssues = validateReplyButtons(buttons)
+    if (buttonIssues.length > 0) {
+      return NextResponse.json(
+        { error: buttonIssues[0] },
+        { status: 400 }
+      )
+    }
+
+    if (message_type !== 'text' && Array.isArray(buttons) && buttons.length > 0) {
+      return NextResponse.json(
+        { error: 'buttons are only supported for text messages' },
+        { status: 400 }
+      )
+    }
+
+    const normalizedButtons = normalizeReplyButtons(buttons)
 
     // Fetch conversation and contact
     const { data: conversation, error: convError } = await supabase
@@ -189,6 +215,17 @@ export async function POST(request: Request) {
         })
         return result.messageId
       }
+      if (normalizedButtons.length > 0) {
+        const result = await sendInteractiveButtonsMessage({
+          phoneNumberId: config.phone_number_id,
+          accessToken,
+          to: phone,
+          text: content_text,
+          buttons: normalizedButtons,
+          contextMessageId,
+        })
+        return result.messageId
+      }
       const result = await sendTextMessage({
         phoneNumberId: config.phone_number_id,
         accessToken,
@@ -250,7 +287,7 @@ export async function POST(request: Request) {
     //   conversation_id, sender_type, content_type, content_text,
     //   media_url, template_name, message_id, status, created_at
     const { data: messageRecord, error: msgError } =
-      await insertMessageWithReplyFallback<{ id: string }>(
+      await insertMessageWithOptionalFieldsFallback<{ id: string }>(
         async (payload) =>
           await supabase
             .from('messages')
@@ -267,6 +304,7 @@ export async function POST(request: Request) {
           message_id: waMessageId,
           status: 'sent',
           reply_to_message_id: reply_to_message_id || null,
+          buttons: normalizedButtons.length > 0 ? normalizedButtons : null,
         },
         'send',
       )

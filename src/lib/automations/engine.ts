@@ -16,6 +16,10 @@ import type {
 } from '@/types'
 import { supabaseAdmin } from './admin-client'
 import { engineSendText, engineSendTemplate } from './meta-send'
+import {
+  normalizeReplyButtons,
+  validateReplyButtons,
+} from '@/lib/whatsapp/reply-buttons'
 
 // ------------------------------------------------------------
 // Public API
@@ -24,6 +28,8 @@ import { engineSendText, engineSendTemplate } from './meta-send'
 export interface AutomationContext {
   /** Raw message text, for keyword_match + message_content conditions. */
   message_text?: string
+  /** Exact button id when the inbound message was a quick-reply button tap. */
+  button_reply_id?: string
   /** Conversation the event belongs to, if any. */
   conversation_id?: string
   /** Arbitrary variables accumulated during execution. */
@@ -303,14 +309,20 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       if (!args.contactId) throw new Error('send_message needs a contact')
       const text = interpolate(cfg.text, args)
       if (!text.trim()) throw new Error('send_message has empty text')
+      const buttonIssues = validateReplyButtons(cfg.buttons)
+      if (buttonIssues.length > 0) throw new Error(buttonIssues[0])
+      const buttons = normalizeReplyButtons(cfg.buttons)
       const conversationId = await resolveConversationId(args)
       const { whatsapp_message_id } = await engineSendText({
         userId: args.automation.user_id,
         conversationId,
         contactId: args.contactId,
         text,
+        buttons,
       })
-      return `sent via Meta (${whatsapp_message_id})`
+      return buttons.length > 0
+        ? `interactive buttons sent via Meta (${whatsapp_message_id})`
+        : `sent via Meta (${whatsapp_message_id})`
     }
 
     case 'send_template': {
@@ -513,6 +525,9 @@ async function evaluateCondition(cfg: ConditionStepConfig, args: ExecuteArgs): P
       const text = (args.context.message_text ?? '').toString()
       return text.toLowerCase().includes((cfg.value ?? '').toLowerCase())
     }
+    case 'button_reply': {
+      return String(args.context.button_reply_id ?? '') === String(cfg.operand ?? '')
+    }
     case 'time_of_day': {
       // operand form "HH:mm-HH:mm" — true if now is within that window
       // (supports over-midnight ranges like "18:00-09:00").
@@ -542,6 +557,7 @@ function interpolate(s: string, args: ExecuteArgs): string {
   return s.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, key) => {
     const [ns, prop] = String(key).split('.')
     if (ns === 'message' && prop === 'text') return String(args.context.message_text ?? '')
+    if (ns === 'message' && prop === 'button_id') return String(args.context.button_reply_id ?? '')
     if (ns === 'vars' && prop) return String(args.context.vars?.[prop] ?? '')
     return ''
   })

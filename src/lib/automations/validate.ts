@@ -1,4 +1,5 @@
 import type { AutomationTriggerType } from '@/types'
+import { MAX_REPLY_BUTTONS } from '@/lib/whatsapp/reply-buttons'
 
 // ------------------------------------------------------------
 // Pre-flight config validation for automations about to be activated.
@@ -57,6 +58,7 @@ function validateOne(step: StepLike, path: string, issues: ValidationIssue[]): v
       if (!nonEmpty(c.text)) {
         issues.push({ path: `${path}.text`, message: 'message text is required' })
       }
+      issues.push(...validateReplyButtons(c.buttons, path))
       break
     case 'send_template':
       if (!nonEmpty(c.template_name)) {
@@ -175,4 +177,50 @@ export function validateTriggerForActivation(
 
 function nonEmpty(v: unknown): boolean {
   return typeof v === 'string' && v.trim().length > 0
+}
+
+function validateReplyButtons(
+  rawButtons: unknown,
+  path: string,
+): ValidationIssue[] {
+  if (rawButtons == null) return []
+  if (!Array.isArray(rawButtons)) {
+    return [{ path: `${path}.buttons`, message: 'reply buttons must be an array' }]
+  }
+  if (rawButtons.length > MAX_REPLY_BUTTONS) {
+    return [{
+      path: `${path}.buttons`,
+      message: `you can attach up to ${MAX_REPLY_BUTTONS} reply buttons`,
+    }]
+  }
+
+  const issues: ValidationIssue[] = []
+  const ids: string[] = []
+  rawButtons.forEach((button, index) => {
+    const raw = button as { id?: unknown; title?: unknown }
+    const id = typeof raw?.id === 'string' ? raw.id.trim() : ''
+    const title = typeof raw?.title === 'string' ? raw.title.trim() : ''
+    if (!id) {
+      issues.push({
+        path: `${path}.buttons[${index}].id`,
+        message: 'button id is required',
+      })
+    }
+    if (!title) {
+      issues.push({
+        path: `${path}.buttons[${index}].title`,
+        message: 'button title is required',
+      })
+    }
+    if (id) ids.push(id)
+  })
+
+  if (new Set(ids).size !== ids.length) {
+    issues.push({
+      path: `${path}.buttons`,
+      message: 'button ids must be unique',
+    })
+  }
+
+  return issues
 }

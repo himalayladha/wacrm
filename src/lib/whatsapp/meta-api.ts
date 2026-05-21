@@ -9,6 +9,8 @@
  * instead of a runtime rejection from Meta.
  */
 
+import type { WhatsAppReplyButton } from '@/types'
+
 const META_API_VERSION = 'v21.0'
 const META_API_BASE = `https://graph.facebook.com/${META_API_VERSION}`
 
@@ -163,6 +165,81 @@ export async function sendTemplateMessage(
     type: 'template',
     template,
   }
+  if (contextMessageId) {
+    body.context = { message_id: contextMessageId }
+  }
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+  const data = await response.json()
+  return { messageId: data.messages[0].id }
+}
+
+export interface SendInteractiveButtonsMessageArgs {
+  phoneNumberId: string
+  accessToken: string
+  to: string
+  text: string
+  buttons: WhatsAppReplyButton[]
+  contextMessageId?: string
+}
+
+/**
+ * Send a free-form interactive message with up to 3 quick-reply buttons.
+ */
+export async function sendInteractiveButtonsMessage(
+  args: SendInteractiveButtonsMessageArgs
+): Promise<MetaSendResult> {
+  const {
+    phoneNumberId,
+    accessToken,
+    to,
+    text,
+    buttons,
+    contextMessageId,
+  } = args
+
+  if (!buttons.length || buttons.length > 3) {
+    throw new Error('Interactive reply buttons require between 1 and 3 buttons')
+  }
+
+  const normalizedButtons = buttons.map((button, index) => {
+    const id = String(button.id ?? '').trim()
+    const title = String(button.title ?? '').trim()
+    if (!id) throw new Error(`Interactive button ${index + 1} needs an id`)
+    if (!title) throw new Error(`Interactive button ${index + 1} needs a title`)
+    return {
+      type: 'reply',
+      reply: { id, title },
+    }
+  })
+
+  if (new Set(normalizedButtons.map((button) => button.reply.id)).size !== normalizedButtons.length) {
+    throw new Error('Interactive button ids must be unique')
+  }
+
+  const url = `${META_API_BASE}/${phoneNumberId}/messages`
+  const body: Record<string, unknown> = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'interactive',
+    interactive: {
+      type: 'button',
+      body: { text },
+      action: { buttons: normalizedButtons },
+    },
+  }
+
   if (contextMessageId) {
     body.context = { message_id: contextMessageId }
   }

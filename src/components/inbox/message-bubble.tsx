@@ -132,9 +132,23 @@ function MessageContent({ message }: { message: Message }) {
   switch (message.content_type) {
     case "text":
       return (
-        <p className="whitespace-pre-wrap break-words text-sm">
-          {message.content_text}
-        </p>
+        <div>
+          <p className="whitespace-pre-wrap break-words text-sm">
+            {message.content_text}
+          </p>
+          {message.buttons && message.buttons.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {message.buttons.map((button) => (
+                <span
+                  key={button.id}
+                  className="rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] font-medium"
+                >
+                  {button.title}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
       );
 
     case "image":

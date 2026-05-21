@@ -42,6 +42,50 @@ describe("validateStepsForActivation", () => {
     ]);
   });
 
+  it("validates reply button shape on send_message steps", () => {
+    const issues = validateStepsForActivation([
+      {
+        step_type: "send_message",
+        step_config: {
+          text: "Choose an option",
+          buttons: [
+            { id: "", title: "Pricing" },
+            { id: "pricing", title: "" },
+            { id: "pricing", title: "Pricing again" },
+          ],
+        },
+      },
+    ]);
+    expect(issues.map((i) => i.path)).toEqual([
+      "steps[0].buttons[0].id",
+      "steps[0].buttons[1].title",
+      "steps[0].buttons",
+    ]);
+  });
+
+  it("rejects more than three reply buttons", () => {
+    const issues = validateStepsForActivation([
+      {
+        step_type: "send_message",
+        step_config: {
+          text: "Pick one",
+          buttons: [
+            { id: "one", title: "One" },
+            { id: "two", title: "Two" },
+            { id: "three", title: "Three" },
+            { id: "four", title: "Four" },
+          ],
+        },
+      },
+    ]);
+    expect(issues).toEqual([
+      {
+        path: "steps[0].buttons",
+        message: "you can attach up to 3 reply buttons",
+      },
+    ]);
+  });
+
   it("checks wait amount and unit boundaries", () => {
     const issues = validateStepsForActivation([
       { step_type: "wait", step_config: { amount: 0, unit: "minutes" } },

@@ -1,5 +1,11 @@
-import { sendTextMessage, sendTemplateMessage } from '@/lib/whatsapp/meta-api'
+import type { WhatsAppReplyButton } from '@/types'
+import {
+  sendInteractiveButtonsMessage,
+  sendTextMessage,
+  sendTemplateMessage,
+} from '@/lib/whatsapp/meta-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { insertMessageWithOptionalFieldsFallback } from '@/lib/whatsapp/message-persistence'
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -24,6 +30,7 @@ interface SendTextArgs {
   conversationId: string
   contactId: string
   text: string
+  buttons?: WhatsAppReplyButton[]
 }
 
 interface SendTemplateArgs {
@@ -98,6 +105,16 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       })
       return r.messageId
     }
+    if (input.buttons && input.buttons.length > 0) {
+      const r = await sendInteractiveButtonsMessage({
+        phoneNumberId: config.phone_number_id,
+        accessToken,
+        to: phone,
+        text: input.text,
+        buttons: input.buttons,
+      })
+      return r.messageId
+    }
     const r = await sendTextMessage({
       phoneNumberId: config.phone_number_id,
       accessToken,
@@ -138,16 +155,22 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   const content_type = input.kind === 'template' ? 'template' : 'text'
   const content_text = input.kind === 'text' ? input.text : null
   const template_name = input.kind === 'template' ? input.templateName : null
+  const buttons = input.kind === 'text' && input.buttons?.length ? input.buttons : null
 
-  const { error: msgErr } = await db.from('messages').insert({
-    conversation_id: input.conversationId,
-    sender_type: 'bot',
-    content_type,
-    content_text,
-    template_name,
-    message_id: waMessageId,
-    status: 'sent',
-  })
+  const { error: msgErr } = await insertMessageWithOptionalFieldsFallback(
+    async (payload) => await db.from('messages').insert(payload),
+    {
+      conversation_id: input.conversationId,
+      sender_type: 'bot',
+      content_type,
+      content_text,
+      template_name,
+      message_id: waMessageId,
+      status: 'sent',
+      buttons,
+    },
+    'automation',
+  )
   if (msgErr) {
     // Meta already has the message; record the DB error but don't pretend
     // the send failed. The engine wraps this in a log line.
